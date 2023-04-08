@@ -53,7 +53,7 @@ public final class FlightSqlDatabase implements AdbcDatabase {
   public AdbcConnection connect() throws AdbcException {
     final int count = counter.getAndIncrement();
     return new FlightSqlConnection(
-        allocator.newChildAllocator("adbc-jdbc-connection-" + count, 0, allocator.getLimit()),
+        allocator.newChildAllocator("adbc-flight-sql-connection-" + count, 0, allocator.getLimit()),
         quirks,
         location,
         username,
@@ -61,7 +61,9 @@ public final class FlightSqlDatabase implements AdbcDatabase {
   }
 
   @Override
-  public void close() throws Exception {}
+  public void close() throws Exception {
+    allocator.close();
+  }
 
   @Override
   public String toString() {

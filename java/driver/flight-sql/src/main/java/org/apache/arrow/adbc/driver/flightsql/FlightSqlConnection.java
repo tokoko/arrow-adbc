@@ -20,32 +20,32 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.google.protobuf.InvalidProtocolBufferException;
+
+import java.io.ByteArrayInputStream;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import org.apache.arrow.adbc.core.AdbcConnection;
-import org.apache.arrow.adbc.core.AdbcException;
-import org.apache.arrow.adbc.core.AdbcStatement;
-import org.apache.arrow.adbc.core.BulkIngestMode;
+
+import org.apache.arrow.adbc.core.*;
 import org.apache.arrow.adbc.sql.SqlQuirks;
-import org.apache.arrow.flight.CallHeaders;
-import org.apache.arrow.flight.CallInfo;
-import org.apache.arrow.flight.CallStatus;
-import org.apache.arrow.flight.FlightClient;
-import org.apache.arrow.flight.FlightClientMiddleware;
-import org.apache.arrow.flight.FlightEndpoint;
-import org.apache.arrow.flight.Location;
-import org.apache.arrow.flight.Ticket;
+import org.apache.arrow.flight.*;
 import org.apache.arrow.flight.auth2.Auth2Constants;
 import org.apache.arrow.flight.auth2.BasicAuthCredentialWriter;
 import org.apache.arrow.flight.grpc.CredentialCallOption;
 import org.apache.arrow.flight.impl.Flight;
 import org.apache.arrow.flight.sql.FlightSqlClient;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.UInt4Vector;
+import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.DenseUnionVector;
 import org.apache.arrow.vector.ipc.ArrowReader;
+import org.apache.arrow.vector.ipc.ReadChannel;
+import org.apache.arrow.vector.ipc.message.MessageSerializer;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 public class FlightSqlConnection implements AdbcConnection {
   private final BufferAllocator allocator;
@@ -66,13 +66,14 @@ public class FlightSqlConnection implements AdbcConnection {
             .expireAfterAccess(5, TimeUnit.MINUTES)
             .removalListener(
                 (Location key, FlightClient value, RemovalCause cause) -> {
-                  if (value == null) return;
-                  try {
-                    value.close();
-                  } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException(e);
-                  }
+//                  if (value == null) return;
+//                  try {
+//                    System.out.println(1);
+////                    value.close();
+//                  } catch (InterruptedException e) {
+//                    Thread.currentThread().interrupt();
+//                    throw new RuntimeException(e);
+//                  }
                 })
             .build(
                 loc -> {
@@ -171,6 +172,62 @@ public class FlightSqlConnection implements AdbcConnection {
   }
 
   @Override
+  public ArrowReader getObjects(GetObjectsDepth depth, String catalogPattern, String dbSchemaPattern, String tableNamePattern, String[] tableTypes, String columnNamePattern) throws AdbcException {
+    try (final VectorSchemaRoot root =
+                 new ObjectMetadataBuilder(allocator, client, depth, catalogPattern, dbSchemaPattern, tableNamePattern, tableTypes, columnNamePattern).build()) {
+      return RootArrowReader.fromRoot(allocator, root);
+    }
+  }
+
+  @Override
+  public ArrowReader getTableTypes() throws AdbcException {
+    FlightInfo info = client.getTableTypes();
+
+    for (FlightEndpoint endpoint : info.getEndpoints()) {
+      FlightStream stream = client.getStream(endpoint.getTicket());
+      while (stream.next()) {
+        VectorSchemaRoot res = stream.getRoot();
+        return RootArrowReader.fromRoot(allocator, res); // TODO
+      }
+    }
+    return null;
+  }
+
+  @Override
+  public Schema getTableSchema(String catalog, String dbSchema, String tableName) throws AdbcException {
+    FlightInfo info = client.getTables(catalog, dbSchema, tableName, null, true);
+
+    int rowCount = 0;
+    Schema schema = null;
+
+    for (final FlightEndpoint endpoint : info.getEndpoints()) {
+      try (final FlightStream stream = client.getStream(endpoint.getTicket())) {
+        while (stream.next()) {
+          final VectorSchemaRoot root = stream.getRoot();
+          rowCount += root.getRowCount();
+          if (rowCount > 0) {
+            final VarBinaryVector tableSchemaVector = (VarBinaryVector) root.getVector("table_schema");
+            schema = MessageSerializer.deserializeSchema(
+                    new ReadChannel(Channels.newChannel(new ByteArrayInputStream(
+                            tableSchemaVector.getObject(0)
+                    ))));
+          }
+        }
+      } catch (FlightRuntimeException e) {
+        throw FlightSqlDriverUtil.fromFlightException(e);
+      } catch (Exception e) {
+        throw AdbcException.io("[Flight SQL] " + e.getMessage()).withCause(e);
+      }
+    }
+
+    if (rowCount == 0) {
+      throw new AdbcException("", null, AdbcStatusCode.NOT_FOUND, null, 0);
+    } else {
+      return schema;
+    }
+  }
+
+  @Override
   public void rollback() throws AdbcException {
     throw AdbcException.notImplemented("[Flight SQL] Transaction methods are not supported");
   }
@@ -189,7 +246,7 @@ public class FlightSqlConnection implements AdbcConnection {
 
   @Override
   public void close() throws Exception {
-    client.close();
+    clientCache.invalidateAll();
   }
 
   @Override

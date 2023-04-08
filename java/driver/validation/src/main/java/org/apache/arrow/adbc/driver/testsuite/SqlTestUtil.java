@@ -63,10 +63,8 @@ public final class SqlTestUtil {
       strs.setSafe(2, "".getBytes(StandardCharsets.UTF_8));
       strs.setSafe(3, "asdf".getBytes(StandardCharsets.UTF_8));
       root.setRowCount(4);
-      try (final AdbcStatement stmt = connection.bulkIngest(tableName, BulkIngestMode.CREATE)) {
-        stmt.bind(root);
-        stmt.executeUpdate();
-      }
+
+      quirks.createTable(connection, tableName, root);
     }
     return schema;
   }

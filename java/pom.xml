@@ -83,6 +83,7 @@
     <module>core</module>
     <module>driver/flight-sql</module>
     <module>driver/flight-sql-validation</module>
+    <module>driver/flight-sql-validation-dremio</module>
     <module>driver/jdbc</module>
     <module>driver/jdbc-validation-derby</module>
     <module>driver/jdbc-validation-postgresql</module>

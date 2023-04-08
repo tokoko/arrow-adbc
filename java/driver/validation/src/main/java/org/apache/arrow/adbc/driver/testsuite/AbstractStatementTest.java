@@ -63,7 +63,7 @@ public abstract class AbstractStatementTest {
     database = quirks.initDatabase(allocator);
     connection = database.connect();
     util = new SqlTestUtil(quirks);
-    tableName = quirks.caseFoldTableName("bulktable");
+    tableName = quirks.caseFoldTableName("\"adbc\".bulktable");
     schema =
         new Schema(
             Arrays.asList(
@@ -71,6 +71,8 @@ public abstract class AbstractStatementTest {
                     quirks.caseFoldColumnName("ints"), new ArrowType.Int(32, /*signed=*/ true)),
                 Field.nullable(quirks.caseFoldColumnName("strs"), new ArrowType.Utf8())));
     quirks.cleanupTable(tableName);
+
+
   }
 
   @AfterEach
@@ -188,6 +190,9 @@ public abstract class AbstractStatementTest {
   @Test
   public void prepareQuery() throws Exception {
     final Schema expectedSchema = util.ingestTableIntsStrs(allocator, connection, tableName);
+
+    connection = database.connect();
+
     try (final AdbcStatement stmt = connection.createStatement()) {
       stmt.setSqlQuery("SELECT * FROM " + tableName);
       stmt.prepare();

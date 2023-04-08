@@ -19,9 +19,10 @@ package org.apache.arrow.adbc.driver.testsuite;
 
 import java.util.List;
 import java.util.stream.Collectors;
-import org.apache.arrow.adbc.core.AdbcDatabase;
-import org.apache.arrow.adbc.core.AdbcException;
+
+import org.apache.arrow.adbc.core.*;
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 /** Account for driver/vendor-specific quirks in implementing validation tests. */
 public abstract class SqlValidationQuirks {
@@ -37,6 +38,10 @@ public abstract class SqlValidationQuirks {
   /** Normalize a column name. */
   public String caseFoldColumnName(String name) {
     return name;
+  }
+
+  public String defaultSchema() {
+    return null;
   }
 
   /** Generates a query to set a column to NOT NULL in a table. */
@@ -81,5 +86,17 @@ public abstract class SqlValidationQuirks {
         + " ("
         + caseFoldColumnName(referenceColumn)
         + ") ";
+  }
+
+  public void createTable(AdbcConnection connection,
+                          String tableName,
+                          VectorSchemaRoot root
+                          ) {
+    try (final AdbcStatement stmt = connection.bulkIngest(tableName, BulkIngestMode.CREATE)) {
+      stmt.bind(root);
+      stmt.executeUpdate();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 }

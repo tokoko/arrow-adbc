@@ -65,6 +65,7 @@ public abstract class AbstractConnectionMetadataTest {
   protected BufferAllocator allocator;
   protected SqlTestUtil util;
   protected String tableName;
+  protected String tableQualifiedName;
   protected String mainTable;
   protected String dependentTable;
 
@@ -76,13 +77,14 @@ public abstract class AbstractConnectionMetadataTest {
     connection = database.connect();
     util = new SqlTestUtil(quirks);
     tableName = quirks.caseFoldTableName("foo");
-    mainTable = quirks.caseFoldTableName("product");
-    dependentTable = quirks.caseFoldTableName("sale");
+    tableQualifiedName = (quirks.defaultSchema() != null ? quirks.defaultSchema() + "." : "") + quirks.caseFoldTableName("foo");
+    mainTable = quirks.caseFoldTableName("adbc.product");
+    dependentTable = quirks.caseFoldTableName("adbc.sale");
   }
 
   @AfterEach
   public void afterEach() throws Exception {
-    quirks.cleanupTable(tableName);
+    quirks.cleanupTable(tableQualifiedName);
     quirks.cleanupTable(mainTable);
     quirks.cleanupTable(dependentTable);
     AutoCloseables.close(connection, database, allocator);
@@ -206,7 +208,7 @@ public abstract class AbstractConnectionMetadataTest {
 
   @Test
   public void getObjectsColumns() throws Exception {
-    final Schema schema = util.ingestTableIntsStrs(allocator, connection, tableName);
+    final Schema schema = util.ingestTableIntsStrs(allocator, connection, tableQualifiedName);
     boolean tableFound = false;
     try (final ArrowReader reader =
         connection.getObjects(AdbcConnection.GetObjectsDepth.ALL, null, null, null, null, null)) {
@@ -245,7 +247,7 @@ public abstract class AbstractConnectionMetadataTest {
 
   @Test
   public void getObjectsCatalogs() throws Exception {
-    util.ingestTableIntsStrs(allocator, connection, tableName);
+    util.ingestTableIntsStrs(allocator, connection, tableQualifiedName);
     try (final ArrowReader reader =
         connection.getObjects(
             AdbcConnection.GetObjectsDepth.CATALOGS, null, null, null, null, null)) {
@@ -253,6 +255,7 @@ public abstract class AbstractConnectionMetadataTest {
           .isEqualTo(StandardSchemas.GET_OBJECTS_SCHEMA);
       assertThat(reader.loadNextBatch()).isTrue();
       assertThat(reader.getVectorSchemaRoot().getRowCount()).isGreaterThan(0);
+      System.out.println(reader.getVectorSchemaRoot().contentToTSVString());
       final FieldVector dbSchemas = reader.getVectorSchemaRoot().getVector(1);
       // We requested depth == CATALOGS, so the db_schemas field should be all null
       assertThat(dbSchemas.getNullCount()).isEqualTo(dbSchemas.getValueCount());
@@ -261,20 +264,21 @@ public abstract class AbstractConnectionMetadataTest {
 
   @Test
   public void getObjectsDbSchemas() throws Exception {
-    util.ingestTableIntsStrs(allocator, connection, tableName);
+    util.ingestTableIntsStrs(allocator, connection, tableQualifiedName);
     try (final ArrowReader reader =
         connection.getObjects(
             AdbcConnection.GetObjectsDepth.DB_SCHEMAS, null, null, null, null, null)) {
       assertThat(reader.getVectorSchemaRoot().getSchema())
           .isEqualTo(StandardSchemas.GET_OBJECTS_SCHEMA);
       assertThat(reader.loadNextBatch()).isTrue();
+      System.out.println(reader.getVectorSchemaRoot().contentToTSVString());
       assertThat(reader.getVectorSchemaRoot().getRowCount()).isGreaterThan(0);
     }
   }
 
   @Test
   public void getObjectsTables() throws Exception {
-    util.ingestTableIntsStrs(allocator, connection, tableName);
+    util.ingestTableIntsStrs(allocator, connection, tableQualifiedName);
     try (final ArrowReader reader =
         connection.getObjects(
             AdbcConnection.GetObjectsDepth.TABLES, null, null, null, null, null)) {
@@ -294,18 +298,9 @@ public abstract class AbstractConnectionMetadataTest {
 
   @Test
   public void getTableSchema() throws Exception {
-    final Schema schema =
-        new Schema(
-            Arrays.asList(
-                Field.nullable(
-                    quirks.caseFoldColumnName("INTS"), new ArrowType.Int(32, /*signed=*/ true)),
-                Field.nullable(quirks.caseFoldColumnName("STRS"), new ArrowType.Utf8())));
-    try (final VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
-        final AdbcStatement stmt = connection.bulkIngest(tableName, BulkIngestMode.CREATE)) {
-      stmt.bind(root);
-      stmt.executeUpdate();
-    }
-    assertThat(connection.getTableSchema(/*catalog*/ null, /*dbSchema*/ null, tableName))
+    final Schema schema = util.ingestTableIntsStrs(allocator, connection, tableQualifiedName);
+
+    assertThat(connection.getTableSchema(/*catalog*/ null, /*dbSchema*/ quirks.defaultSchema(), tableName))
         .isEqualTo(schema);
   }
 
